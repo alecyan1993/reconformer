@@ -10,6 +10,10 @@ import ray
 import torch.multiprocessing
 from tools.simple_loader import *
 
+import open3d as o3d
+import numpy as np
+from glob import glob
+
 torch.multiprocessing.set_sharing_strategy('file_system')
 
 
@@ -18,7 +22,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description='Fuse ground truth tsdf')
     parser.add_argument("--dataset", default='scannet')
     parser.add_argument("--data_path", metavar="DIR",
-                        help="path to raw dataset", default='/data/scannet/output/')
+                        help="path to raw dataset", default='/mnt/sdd/scannet_subset/')
     parser.add_argument("--save_name", metavar="DIR",
                         help="file name", default='all_tsdf')
     parser.add_argument('--test', action='store_true',
@@ -34,10 +38,10 @@ def parse_args():
     parser.add_argument('--min_distance', default=0.1, type=float)
 
     # ray multi processes
-    parser.add_argument('--n_proc', type=int, default=16, help='#processes launched to process scenes.')
-    parser.add_argument('--n_gpu', type=int, default=2, help='#number of gpus')
-    parser.add_argument('--num_workers', type=int, default=8)
-    parser.add_argument('--loader_num_workers', type=int, default=8)
+    parser.add_argument('--n_proc', type=int, default=1, help='#processes launched to process scenes.')
+    parser.add_argument('--n_gpu', type=int, default=1, help='#number of gpus')
+    parser.add_argument('--num_workers', type=int, default=1)
+    parser.add_argument('--loader_num_workers', type=int, default=1)
     return parser.parse_args()
 
 
@@ -111,6 +115,8 @@ def save_tsdf_full(args, scene_path, cam_intr, depth_list, cam_pose_list, color_
     for l in range(args.num_layers):
         tsdf_vol, color_vol, weight_vol = tsdf_vol_list[l].get_volume()
         np.savez_compressed(os.path.join(args.save_path, scene_path, 'full_tsdf_layer{}'.format(str(l))), tsdf_vol)
+        # np.savez_compressed(os.path.join(args.save_path, scene_path, 'full_semantic_layer{}'.format(str(l))), color_vol)
+        np.savez_compressed(os.path.join(args.save_path, scene_path, 'full_weight_layer{}'.format(str(l))), weight_vol)
 
     if save_mesh:
         for l in range(args.num_layers):
@@ -193,7 +199,7 @@ def save_fragment_pkl(args, scene, cam_intr, depth_list, cam_pose_list):
         pickle.dump(fragments, f)
 
 
-@ray.remote(num_cpus=args.num_workers + 1, num_gpus=(1 / args.n_proc))
+# @ray.remote(num_cpus=args.num_workers + 1, num_gpus=(1 / args.n_proc))
 def process_with_single_worker(args, scannet_files):
     for scene in tqdm(scannet_files):
         if os.path.exists(os.path.join(args.save_path, scene, 'fragments.pkl')):
@@ -205,7 +211,8 @@ def process_with_single_worker(args, scannet_files):
         color_all = {}
 
         if args.dataset == 'scannet':
-            n_imgs = len(os.listdir(os.path.join(args.data_path, scene, 'color')))
+            # n_imgs = len(os.listdir(os.path.join(args.data_path, scene, 'color')))
+            n_imgs = len(os.listdir(os.path.join(args.data_path, scene, 'seg')))
             intrinsic_dir = os.path.join(args.data_path, scene, 'intrinsic', 'intrinsic_depth.txt')
             cam_intr = np.loadtxt(intrinsic_dir, delimiter=' ')[:3, :3]
             dataset = ScanNetDataset(n_imgs, scene, args.data_path, args.max_depth)
@@ -213,7 +220,7 @@ def process_with_single_worker(args, scannet_files):
         dataloader = torch.utils.data.DataLoader(dataset, batch_size=None, collate_fn=collate_fn,
                                                  batch_sampler=None, num_workers=args.loader_num_workers)
 
-        for id, (cam_pose, depth_im, _) in enumerate(dataloader):
+        for id, (cam_pose, depth_im, color_image) in enumerate(dataloader):
             if id % 100 == 0:
                 print("{}: read frame {}/{}".format(scene, str(id), str(n_imgs)))
 
@@ -221,11 +228,30 @@ def process_with_single_worker(args, scannet_files):
                 continue
             depth_all.update({id: depth_im})
             cam_pose_all.update({id: cam_pose})
-            # color_all.update({id: color_image})
-
+            color_all.update({id: color_image})
+            
+        save_semantic_full(args, scene)            
         save_tsdf_full(args, scene, cam_intr, depth_all, cam_pose_all, color_all, save_mesh=False)
         save_fragment_pkl(args, scene, cam_intr, depth_all, cam_pose_all)
 
+
+def save_semantic_full(args, scene): 
+    print("Generate Groundtruth for the Semantic Class...")
+    semantic_model_dir = os.path.join(args.data_path, scene, '*.labels.ply')
+    semantic_model_files = glob(semantic_model_dir)
+    # hard-coded here since there is only one .labels.ply file in each scene directory
+    pcd = o3d.io.read_point_cloud(semantic_model_files[0])
+    
+    semantic_path = os.path.join(args.save_path, scene)
+    if not os.path.exists(semantic_path):
+        os.makedirs(semantic_path)
+    
+    for l in range(args.num_layers):
+        voxel_size = args.voxel_size * 2 ** l
+        voxel_grid = o3d.geometry.VoxelGrid.create_from_point_cloud(pcd, voxel_size=voxel_size)
+        semantic_array = gen_semantic_array(voxel_grid, voxel_size)
+        np.savez_compressed(os.path.join(args.save_path, scene, 'full_semantic_layer{}'.format(str(l))), semantic_array)
+    
 
 def split_list(_list, n):
     assert len(_list) >= n
@@ -244,12 +270,13 @@ def generate_pkl(args):
         splits = ['test']
     for split in splits:
         fragments = []
-        with open(os.path.join(args.save_path, 'splits', 'scannetv2_{}.txt'.format(split))) as f:
-            split_files = f.readlines()
+        # with open(os.path.join(args.save_path, 'splits', 'scannetv2_{}.txt'.format(split))) as f:
+        #     split_files = f.readlines()
         for scene in all_scenes:
             if 'scene' not in scene:
                 continue
-            if scene + '\n' in split_files:
+            # if scene + '\n' in split_files:
+            if True:
                 with open(os.path.join(args.save_path, scene, 'fragments.pkl'), 'rb') as f:
                     frag_scene = pickle.load(f)
                 fragments.extend(frag_scene)
@@ -257,11 +284,35 @@ def generate_pkl(args):
         with open(os.path.join(args.save_path, 'fragments_{}.pkl'.format(split)), 'wb') as f:
             pickle.dump(fragments, f)
 
+            
+def color_to_class(rgb):
+    r, g, b = [int(c * 255) for c in rgb]
+    unique_id = r << 16 | g << 8 | b
+    return int(unique_id)
+
+
+def gen_semantic_array(voxel_grid, voxel_size):
+    voxels = voxel_grid.get_voxels()
+    voxel_grid_bound = voxel_grid.get_axis_aligned_bounding_box()
+    
+    voxel_grid_shape = ((voxel_grid_bound.get_max_bound() - voxel_grid_bound.get_min_bound()) / voxel_size).astype(int)
+    semantic_array = np.zeros(voxel_grid_shape)
+    
+    for voxel in voxels:
+        color = voxel.color
+        unique_id = color_to_class(color)
+        try:
+            semantic_array[voxel.grid_index] = unique_id
+        except:
+            continue
+    
+    return semantic_array
+
 
 if __name__ == "__main__":
     all_proc = args.n_proc * args.n_gpu
 
-    ray.init(num_cpus=all_proc * (args.num_workers + 1), num_gpus=args.n_gpu)
+    # ray.init(num_cpus=all_proc * (args.num_workers + 1), num_gpus=args.n_gpu)
 
     if args.dataset == 'scannet':
         if not args.test:
@@ -272,13 +323,15 @@ if __name__ == "__main__":
     else:
         raise NameError('error!')
 
-    files = split_list(files, all_proc)
+    # files = split_list(files, all_proc)
 
-    ray_worker_ids = []
-    for w_idx in range(all_proc):
-        ray_worker_ids.append(process_with_single_worker.remote(args, files[w_idx]))
+    # ray_worker_ids = []
+    # for w_idx in range(all_proc):
+    #     ray_worker_ids.append(process_with_single_worker.remote(args, files[w_idx]))
 
-    results = ray.get(ray_worker_ids)
-
+    # results = ray.get(ray_worker_ids)
+    
+    results = process_with_single_worker(args, files)
+    
     if args.dataset == 'scannet':
         generate_pkl(args)
