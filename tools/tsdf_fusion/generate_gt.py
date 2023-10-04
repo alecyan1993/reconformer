@@ -58,19 +58,31 @@ def save_tsdf_full(args, scene_path, cam_intr, depth_list, cam_pose_list, color_
     vol_bnds = np.zeros((3, 2))
 
     n_imgs = len(depth_list.keys())
-    if n_imgs > 200:
-        ind = np.linspace(0, n_imgs - 1, 200).astype(np.int32)
-        image_id = np.array(list(depth_list.keys()))[ind]
-    else:
-        image_id = depth_list.keys()
-    for id in image_id:
-        depth_im = depth_list[id]
-        cam_pose = cam_pose_list[id]
+    # if n_imgs > 200:
+    #     ind = np.linspace(0, n_imgs - 1, 200).astype(np.int32)
+    #     image_id = np.array(list(depth_list.keys()))[ind]
+    # else:
+    #     image_id = depth_list.keys()
+    # for id in image_id:
+    #     depth_im = depth_list[id]
+    #     cam_pose = cam_pose_list[id]
 
-        # Compute camera view frustum and extend convex hull
-        view_frust_pts = get_view_frustum(depth_im, cam_intr, cam_pose)
-        vol_bnds[:, 0] = np.minimum(vol_bnds[:, 0], np.amin(view_frust_pts, axis=1))
-        vol_bnds[:, 1] = np.maximum(vol_bnds[:, 1], np.amax(view_frust_pts, axis=1))
+    #     # Compute camera view frustum and extend convex hull
+    #     view_frust_pts = get_view_frustum(depth_im, cam_intr, cam_pose)
+    #     vol_bnds[:, 0] = np.minimum(vol_bnds[:, 0], np.amin(view_frust_pts, axis=1))
+    #     vol_bnds[:, 1] = np.maximum(vol_bnds[:, 1], np.amax(view_frust_pts, axis=1))
+        
+    # New method to get the vol_bnds
+    # TODO: if there is any error during training, then add the former vol_bnds to `save_semantic_full`
+    semantic_model_dir = os.path.join(args.data_path, scene_path, '*.labels.ply')
+    semantic_model_files = glob(semantic_model_dir)
+    # hard-coded here since there is only one .labels.ply file in each scene directory
+    pcd = o3d.io.read_point_cloud(semantic_model_files[0])
+    voxel_grid = o3d.geometry.VoxelGrid.create_from_point_cloud(pcd, voxel_size=args.voxel_size)
+    vol_bnds[:, 0] = voxel_grid.get_min_bound()
+    vol_bnds[:, 1] = voxel_grid.get_max_bound()
+    
+    
     # ======================================================================================================== #
 
     # ======================================================================================================== #
