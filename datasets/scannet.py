@@ -26,6 +26,7 @@ class ScanNetDataset(Dataset):
         self.n_scales = n_scales
         self.epoch = None
         self.tsdf_cashe = {}
+        self.semantic_cashe = {}
         self.max_cashe = 100
 
     def build_list(self):
@@ -67,6 +68,18 @@ class ScanNetDataset(Dataset):
                 full_tsdf_list.append(full_tsdf.f.arr_0)
             self.tsdf_cashe[scene] = full_tsdf_list
         return self.tsdf_cashe[scene]
+    
+    def read_scene_semantics(self, data_path, scene):
+        if scene not in self.semantic_cashe.keys():
+            if len(self.semantic_cashe) > self.max_cashe:
+                self.semantic_cashe = {}
+            full_semantic_list = []
+            for l in range(self.n_scales + 1):
+                full_semantic = np.load(os.path.join(data_path, scene, 'full_semantic_layer{}.npz'.format(l)),
+                                    allow_pickle=True)
+                full_semantic_list.append(full_semantic.f.arr_0)
+            self.semantic_cashe[scene] = full_semantic_list
+        return self.semantic_cashe[scene]
 
     def __getitem__(self, idx):
         meta = self.metas[idx]
@@ -77,6 +90,7 @@ class ScanNetDataset(Dataset):
         intrinsics_list = []
 
         tsdf_list = self.read_scene_volumes(os.path.join(self.datapath, self.tsdf_file), meta['scene'])
+        semantic_list = self.read_scene_semantics(os.path.join(self.datapath, self.tsdf_file), meta['scene'])
 
         for i, vid in enumerate(meta['image_ids']):
             # load images
@@ -105,6 +119,7 @@ class ScanNetDataset(Dataset):
             'intrinsics': intrinsics,
             'extrinsics': extrinsics,
             'tsdf_list_full': tsdf_list,
+            'semantic_list_full': semantic_list, 
             'vol_origin': meta['vol_origin'],
             'scene': meta['scene'],
             'fragment': meta['scene'] + '_' + str(meta['fragment_id']),

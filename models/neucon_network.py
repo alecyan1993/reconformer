@@ -35,9 +35,9 @@ class NeuConNet(nn.Module):
         self.tsdf_preds = nn.ModuleList()
         self.occ_preds = nn.ModuleList()
         
-        # # MLPs that predict semantics
-        # if cfg.SEMANTIC.SEMANTIC_ON:
-        #     self.semantic_preds = nn.ModuleList()
+        # MLPs that predict semantics
+        if self.cfg.SEMANTIC.SEMANTIC_ON:
+            self.semantic_preds = nn.ModuleList()
         
         for i in range(len(cfg.THRESHOLDS)):
             self.sp_convs.append(
@@ -49,9 +49,9 @@ class NeuConNet(nn.Module):
             )
             self.tsdf_preds.append(nn.Linear(channels[i], 1))
             self.occ_preds.append(nn.Linear(channels[i], 1))
-            # # TODO: add semantic predictors
-            # if cfg.SEMANTIC.SEMANTIC_ON:
-            #     self.semantic_preds.append(nn.Linear(channels[i], 1))
+            # TODO: add semantic predictors
+            if self.cfg.SEMANTIC.SEMANTIC_ON:
+                self.semantic_preds.append(nn.Linear(channels[i], 1))
 
     def get_target(self, coords, inputs, scale):
         '''
@@ -71,9 +71,9 @@ class NeuConNet(nn.Module):
             tsdf_target = tsdf_target[coords_down[:, 0], coords_down[:, 1], coords_down[:, 2], coords_down[:, 3]]
             occ_target = occ_target[coords_down[:, 0], coords_down[:, 1], coords_down[:, 2], coords_down[:, 3]]
             
-            # if self.cfg.SEMANTIC.SEMANTIC_ON:
-            #     semantic_target = inputs['semantic_list'][scale]
-            #     semantic_target = semantic_target[coords_down[:, 0], coords_down[:, 1], coords_down[:, 2], coords_down[:, 3]]
+            if self.cfg.SEMANTIC.SEMANTIC_ON:
+                semantic_target = inputs['semantic_list'][scale]
+                semantic_target = semantic_target[coords_down[:, 0], coords_down[:, 1], coords_down[:, 2], coords_down[:, 3]]
             
             return tsdf_target, occ_target
 
@@ -177,6 +177,7 @@ class NeuConNet(nn.Module):
 
             tsdf = self.tsdf_preds[i](feat)
             occ = self.occ_preds[i](feat)
+            semantic = self.semantic_preds[i](feat)
 
             # -------compute loss-------
             if tsdf_target is not None:

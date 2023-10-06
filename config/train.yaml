@@ -6,7 +6,7 @@ SAVE_FREQ: 1
 MODE: 'train'
 
 TRAIN:
-  PATH: '/mnt/sdd/scannet/'
+  PATH: '/mnt/sdd/scannet_subset/'
   EPOCHS: 10
   N_VIEWS: 9
   LR: 1e-3
@@ -14,7 +14,7 @@ TRAIN:
   LREPOCHS: '12,24,48:2'
 
 TEST:
-  PATH: '/mnt/sdd/scannet/'
+  PATH: '/mnt/sdd/scannet_subset/'
   N_VIEWS: 9
   N_WORKERS: 4
 
@@ -41,5 +41,5 @@ MODEL:
   POS_WEIGHT: 1.5
 
 
-# SEMANTIC:
-#   SEMANTIC_ON: True
+SEMANTIC:
+  SEMANTIC_ON: True
