@@ -34,10 +34,7 @@ class NeuConNet(nn.Module):
         # MLPs that predict tsdf and occupancy.
         self.tsdf_preds = nn.ModuleList()
         self.occ_preds = nn.ModuleList()
-        
-        # MLPs that predict semantics
-        if self.cfg.SEMANTIC.SEMANTIC_ON:
-            self.semantic_preds = nn.ModuleList()
+        self.semantic_preds = nn.ModuleList()
         
         for i in range(len(cfg.THRESHOLDS)):
             self.sp_convs.append(
@@ -50,8 +47,7 @@ class NeuConNet(nn.Module):
             self.tsdf_preds.append(nn.Linear(channels[i], 1))
             self.occ_preds.append(nn.Linear(channels[i], 1))
             # TODO: add semantic predictors
-            if self.cfg.SEMANTIC.SEMANTIC_ON:
-                self.semantic_preds.append(nn.Linear(channels[i], 1))
+            self.semantic_preds.append(nn.Linear(channels[i], 1))
 
     def get_target(self, coords, inputs, scale):
         '''
@@ -65,15 +61,13 @@ class NeuConNet(nn.Module):
         with torch.no_grad():
             tsdf_target = inputs['tsdf_list'][scale]
             occ_target = inputs['occ_list'][scale]
+            semantic_target = inputs['semantic_list'][scale]
             coords_down = coords.detach().clone().long()
             # 2 ** scale == interval
             coords_down[:, 1:] = (coords[:, 1:] // 2 ** scale)
             tsdf_target = tsdf_target[coords_down[:, 0], coords_down[:, 1], coords_down[:, 2], coords_down[:, 3]]
             occ_target = occ_target[coords_down[:, 0], coords_down[:, 1], coords_down[:, 2], coords_down[:, 3]]
-            
-            if self.cfg.SEMANTIC.SEMANTIC_ON:
-                semantic_target = inputs['semantic_list'][scale]
-                semantic_target = semantic_target[coords_down[:, 0], coords_down[:, 1], coords_down[:, 2], coords_down[:, 3]]
+            semantic_target = semantic_target[coords_down[:, 0], coords_down[:, 1], coords_down[:, 2], coords_down[:, 3]]
             
             return tsdf_target, occ_target
 
@@ -215,14 +209,21 @@ class NeuConNet(nn.Module):
             pre_feat = feat[occupancy]
             pre_tsdf = tsdf[occupancy]
             pre_occ = occ[occupancy]
+            pre_semantic = semantic[occupancy]
 
-            pre_feat = torch.cat([pre_feat, pre_tsdf, pre_occ], dim=1)
+            pre_feat = torch.cat([pre_feat, pre_tsdf, pre_occ, pre_semantic], dim=1)
 
             if i == self.cfg.N_LAYER - 1:
                 outputs['coords'] = pre_coords
                 outputs['tsdf'] = pre_tsdf
+                outputs['semantic'] = pre_semantic
 
         return outputs, loss_dict
+    
+    @staticmethod
+    def compute_loss_semantic(tsdf, occ, semantic, tsdf_target, occ_target, semantic_target, loss_weight=(1, 1), 
+                              mask=None, pos_weight=1.0):
+        pass
 
     @staticmethod
     def compute_loss(tsdf, occ, tsdf_target, occ_target, loss_weight=(1, 1),
